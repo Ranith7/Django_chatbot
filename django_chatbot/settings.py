@@ -25,7 +25,7 @@ SECRET_KEY = config("SECRET_KEY") # changed manualy
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = config("DEBUG", default=False, cast=bool) # changed manualy
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ['ranith-chatbot-d1nh.onrender.com']
 
 
 # Application definition
