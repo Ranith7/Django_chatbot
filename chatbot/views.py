@@ -16,6 +16,7 @@ import re
 from difflib import SequenceMatcher
 
 from django.conf import settings
+from django.db import IntegrityError, OperationalError, DatabaseError
 
 # ✅ OpenRouter client setup (lazy)
 def get_openrouter_client():
@@ -303,34 +304,45 @@ def upload_pdf(request):
 # ---------------------------
 def login_view(request):
     if request.method == 'POST':
-        username = request.POST['username']
-        password = request.POST['password']
-        user = auth.authenticate(request, username=username, password=password)
-        if user is not None:
-            auth.login(request, user)
-            return redirect('chatbot')
-        else:
-            return render(request, 'login.html', {'error_message': 'Invalid Username or Password'})
+        username = request.POST.get('username', '').strip()
+        password = request.POST.get('password', '')
+        try:
+            user = auth.authenticate(request, username=username, password=password)
+            if user is not None:
+                auth.login(request, user)
+                return redirect('chatbot')
+            else:
+                return render(request, 'login.html', {'error_message': 'Invalid Username or Password'})
+        except OperationalError as e:
+            return render(request, 'login.html', {'error_message': f'Database error during login: {e}'})
+        except DatabaseError as e:
+            return render(request, 'login.html', {'error_message': f'Database error: {e}'})
     return render(request, 'login.html')
 
 
 def register_view(request):
     if request.method == 'POST':
-        username = request.POST['username']
-        email = request.POST['email']
-        password1 = request.POST['password1']
-        password2 = request.POST['password2']
+        username = request.POST.get('username', '').strip()
+        email = request.POST.get('email', '').strip()
+        password1 = request.POST.get('password1', '')
+        password2 = request.POST.get('password2', '')
 
-        if password1 == password2:
-            try:
-                user = User.objects.create_user(username, email, password1)
-                user.save()
-                auth.login(request, user)
-                return redirect('chatbot')
-            except:
-                return render(request, 'register.html', {'error_message': 'Error creating account'})
-        else:
+        if not username or not password1:
+            return render(request, 'register.html', {'error_message': 'Username and password are required'})
+
+        if password1 != password2:
             return render(request, 'register.html', {'error_message': "Password doesn't match"})
+
+        try:
+            user = User.objects.create_user(username=username, email=email, password=password1)
+            auth.login(request, user)
+            return redirect('chatbot')
+        except IntegrityError:
+            return render(request, 'register.html', {'error_message': 'Username already exists'})
+        except OperationalError as e:
+            return render(request, 'register.html', {'error_message': f'Database error during registration: {e}'})
+        except Exception as e:
+            return render(request, 'register.html', {'error_message': f'Error creating account: {e}'})
     return render(request, 'register.html')
 
 
