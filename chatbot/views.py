@@ -17,11 +17,15 @@ from difflib import SequenceMatcher
 
 from django.conf import settings
 
-# ✅ OpenRouter client setup
-client = OpenAI(
-    base_url="https://openrouter.ai/api/v1",
-    api_key=settings.OPENROUTER_API_KEY  # use from settings
-)
+# ✅ OpenRouter client setup (lazy)
+def get_openrouter_client():
+    api_key = getattr(settings, 'OPENROUTER_API_KEY', None)
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is not set")
+    return OpenAI(
+        base_url="https://openrouter.ai/api/v1",
+        api_key=api_key
+    )
 
 # ---------------------------
 #  Simple Text Similarity Search
@@ -189,6 +193,7 @@ Please provide a helpful and accurate answer based on the document content."""
             prompt = message
 
         # Call DeepSeek model
+        client = get_openrouter_client()
         completion = client.chat.completions.create(
             model="deepseek/deepseek-chat-v3.1:free",
             messages=[{"role": "user", "content": prompt}],
