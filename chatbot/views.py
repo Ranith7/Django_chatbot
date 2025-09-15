@@ -56,6 +56,33 @@ def find_relevant_chunks(query, chunks, top_k=3):
 from django.contrib import messages
 
 # ---------------------------
+#  PDF Upload View (original)
+# ---------------------------
+def upload_pdf(request):
+    if request.method == 'POST' and request.FILES.get('pdf'):
+        try:
+            pdf_file = request.FILES['pdf']
+            
+            # Validate file type
+            if not pdf_file.name.lower().endswith('.pdf'):
+                messages.error(request, "❌ Please upload a valid PDF file.")
+                return redirect('upload_pdf')
+
+            pdf_obj = UploadedPDF.objects.create(user=request.user, file=pdf_file)
+            process_pdf(pdf_obj)  # extract + embed
+
+            messages.success(request, f"✅ {pdf_file.name} uploaded successfully!")
+            return redirect('chatbot')  # go back to chatbot after upload
+
+        except Exception as e:
+            if 'pdf_obj' in locals():
+                pdf_obj.delete()
+            messages.error(request, f"❌ Error processing PDF: {str(e)}")
+            return redirect('upload_pdf')
+
+    return render(request, 'upload_pdf.html')
+
+# ---------------------------
 #  Utility: Extract + Process PDF
 # ---------------------------
 def process_pdf(pdf_obj):
@@ -113,32 +140,7 @@ def process_pdf(pdf_obj):
         print(f"Error processing PDF {pdf_obj.file.name}: {str(e)}")
         raise e
 
-# ---------------------------
-#  PDF Upload View
-# ---------------------------
-def upload_pdf(request):
-    if request.method == 'POST' and request.FILES.get('pdf'):
-        try:
-            pdf_file = request.FILES['pdf']
-            
-            # Validate file type
-            if not pdf_file.name.lower().endswith('.pdf'):
-                messages.error(request, "❌ Please upload a valid PDF file.")
-                return redirect('upload_pdf')
-
-            pdf_obj = UploadedPDF.objects.create(user=request.user, file=pdf_file)
-            process_pdf(pdf_obj)  # extract + embed
-
-            messages.success(request, f"✅ {pdf_file.name} uploaded successfully!")
-            return redirect('chatbot')  # go back to chatbot after upload
-
-        except Exception as e:
-            if 'pdf_obj' in locals():
-                pdf_obj.delete()
-            messages.error(request, f"❌ Error processing PDF: {str(e)}")
-            return redirect('upload_pdf')
-
-    return render(request, 'upload_pdf.html')
+ 
 
 # ---------------------------
 #  LLM Chat (with optional RAG)
