@@ -1,5 +1,6 @@
 from pathlib import Path
 import os
+from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -13,6 +14,21 @@ DEBUG = os.getenv("DEBUG") == "True"
 # Parse comma-separated hosts and strip whitespace/empties
 _hosts = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "").split(",")]
 ALLOWED_HOSTS = [h for h in _hosts if h]
+
+# Include common defaults and Render domains/healthcheck IP
+for h in ["127.0.0.1", "localhost", "render.com", ".onrender.com"]:
+    if h not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(h)
+
+# Trust the deployed external URL if provided by Render
+_render_url = os.getenv("RENDER_EXTERNAL_URL")  # e.g. https://your-app.onrender.com
+if _render_url:
+    try:
+        parsed = urlparse(_render_url)
+        if parsed.hostname and parsed.hostname not in ALLOWED_HOSTS:
+            ALLOWED_HOSTS.append(parsed.hostname)
+    except Exception:
+        pass
 
 
 
@@ -106,8 +122,10 @@ _csrf_env = os.getenv("CSRF_TRUSTED_ORIGINS", "")
 if _csrf_env:
     CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_env.split(",") if o.strip()]
 else:
-    # Fallback: build from allowed hosts with https scheme
-    CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if h]
+    # Fallback: build from allowed hosts with https scheme and add wildcard Render
+    CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if h and not h.startswith('.')]
+    if "https://*.onrender.com" not in CSRF_TRUSTED_ORIGINS:
+        CSRF_TRUSTED_ORIGINS.append("https://*.onrender.com")
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
