@@ -9,6 +9,7 @@ env/
 # Django stuff
 db.sqlite3
 *.log
+media/
 
 # IDE
 .vscode/

@@ -1,44 +1,224 @@
 from django.shortcuts import render, redirect
 from django.http import JsonResponse
-from openai import OpenAI
 import markdown2
 from django.contrib import auth
 from django.contrib.auth.models import User
-from .models import Chat
+from .models import Chat, UploadedPDF
 from django.utils import timezone
-from decouple import config
+from openai import OpenAI
+import os
 
-# OpenRouter client
+
+# ✅ LangChain imports for RAG
+from langchain.text_splitter import CharacterTextSplitter
+from PyPDF2 import PdfReader
+import re
+from difflib import SequenceMatcher
+
+from django.conf import settings
+
+# ✅ OpenRouter client setup
 client = OpenAI(
     base_url="https://openrouter.ai/api/v1",
-     api_key=config("API_KEY"),  # ✅ Reads API_KEY from .env,
+    api_key=settings.OPENROUTER_API_KEY  # use from settings
 )
 
-def ask_openai(message):
+# ---------------------------
+#  Simple Text Similarity Search
+# ---------------------------
+def find_relevant_chunks(query, chunks, top_k=3):
+    """Find most relevant chunks using simple text similarity"""
+    query_lower = query.lower()
+    query_words = set(query_lower.split())
+    
+    scored_chunks = []
+    
+    for i, chunk in enumerate(chunks):
+        chunk_lower = chunk.lower()
+        chunk_words = set(chunk_lower.split())
+        
+        # Calculate word overlap score
+        word_overlap = len(query_words.intersection(chunk_words))
+        word_ratio = word_overlap / len(query_words) if query_words else 0
+        
+        # Calculate sequence similarity
+        sequence_similarity = SequenceMatcher(None, query_lower, chunk_lower).ratio()
+        
+        # Combined score
+        combined_score = (word_ratio * 0.7) + (sequence_similarity * 0.3)
+        
+        scored_chunks.append((combined_score, i, chunk))
+    
+    # Sort by score and return top chunks
+    scored_chunks.sort(key=lambda x: x[0], reverse=True)
+    return [chunk for score, idx, chunk in scored_chunks[:top_k]]
+
+from django.contrib import messages
+
+# ---------------------------
+#  Utility: Extract + Process PDF
+# ---------------------------
+def process_pdf(pdf_obj):
+    """Extract text, split into chunks, and save for simple text search"""
     try:
+        pdf_path = pdf_obj.file.path
+        reader = PdfReader(pdf_path)
+
+        # Extract text
+        text = ""
+        for page in reader.pages:
+            text += page.extract_text() or ""
+
+        # Check if text was extracted
+        if not text.strip():
+            raise ValueError("No text could be extracted from the PDF")
+
+        # Split into chunks
+        splitter = CharacterTextSplitter(
+            separator="\n",
+            chunk_size=1000,  # Larger chunks for better context
+            chunk_overlap=200,
+            length_function=len
+        )
+        chunks = splitter.split_text(text)
+        
+        # Ensure chunks is a list and not empty
+        if not chunks or not isinstance(chunks, list):
+            raise ValueError("Failed to split text into chunks")
+        
+        # Filter out empty chunks
+        chunks = [chunk.strip() for chunk in chunks if chunk.strip()]
+        
+        if not chunks:
+            raise ValueError("No valid text chunks found after splitting")
+
+        print(f"Successfully extracted {len(chunks)} chunks from PDF: {pdf_obj.file.name}")
+        print(f"First chunk preview: {chunks[0][:100]}...")
+
+        # Save chunks as text file (simple approach)
+        chunks_text = "\n\n---CHUNK_SEPARATOR---\n\n".join(chunks)
+        chunks_path = os.path.join(settings.MEDIA_ROOT, "pdfs", f"chunks_{pdf_obj.id}.txt")
+        
+        with open(chunks_path, 'w', encoding='utf-8') as f:
+            f.write(chunks_text)
+
+        # Save path to DB
+        pdf_obj.faiss_index_path = chunks_path  # Reusing this field for chunks path
+        pdf_obj.save()
+        
+        print(f"Successfully processed PDF: {pdf_obj.file.name}")
+        print(f"Chunks saved to: {chunks_path}")
+        
+    except Exception as e:
+        print(f"Error processing PDF {pdf_obj.file.name}: {str(e)}")
+        raise e
+
+# ---------------------------
+#  PDF Upload View
+# ---------------------------
+def upload_pdf(request):
+    if request.method == 'POST' and request.FILES.get('pdf'):
+        try:
+            pdf_file = request.FILES['pdf']
+            
+            # Validate file type
+            if not pdf_file.name.lower().endswith('.pdf'):
+                messages.error(request, "❌ Please upload a valid PDF file.")
+                return redirect('upload_pdf')
+
+            pdf_obj = UploadedPDF.objects.create(user=request.user, file=pdf_file)
+            process_pdf(pdf_obj)  # extract + embed
+
+            messages.success(request, f"✅ {pdf_file.name} uploaded successfully!")
+            return redirect('chatbot')  # go back to chatbot after upload
+
+        except Exception as e:
+            if 'pdf_obj' in locals():
+                pdf_obj.delete()
+            messages.error(request, f"❌ Error processing PDF: {str(e)}")
+            return redirect('upload_pdf')
+
+    return render(request, 'upload_pdf.html')
+
+# ---------------------------
+#  LLM Chat (with optional RAG)
+# ---------------------------
+def ask_openai(message, user=None):
+    """
+    If user has uploaded PDFs, do RAG retrieval before sending to LLM.
+    Otherwise, send plain query.
+    """
+    try:
+        context = ""
+        if user:
+            pdfs = UploadedPDF.objects.filter(user=user)
+            if pdfs.exists():
+                # Load latest PDF's chunks
+                last_pdf = pdfs.last()
+                if last_pdf.faiss_index_path and os.path.exists(last_pdf.faiss_index_path):
+                    try:
+                        # Read chunks from file
+                        with open(last_pdf.faiss_index_path, 'r', encoding='utf-8') as f:
+                            chunks_text = f.read()
+                        
+                        # Split chunks
+                        chunks = [chunk.strip() for chunk in chunks_text.split("---CHUNK_SEPARATOR---") if chunk.strip()]
+                        
+                        if chunks:
+                            # Find relevant chunks using simple text similarity
+                            relevant_chunks = find_relevant_chunks(message, chunks, top_k=3)
+                            context = "\n\n".join(relevant_chunks)
+                            print(f"Found {len(relevant_chunks)} relevant chunks for query: {message[:50]}...")
+                        
+                    except Exception as e:
+                        print(f"Error reading PDF chunks: {str(e)}")
+
+        # Build final prompt
+        if context:
+            prompt = f"""Based on the following document content, please answer the user's question. If the answer is not in the document, say so clearly.
+
+Document Content:
+{context}
+
+User Question: {message}
+
+Please provide a helpful and accurate answer based on the document content."""
+        else:
+            prompt = message
+
+        # Call DeepSeek model
         completion = client.chat.completions.create(
-            model="openai/gpt-oss-20b:free",
-            messages=[{"role": "user", "content": message}],
+            model="deepseek/deepseek-chat-v3.1:free",
+            messages=[{"role": "user", "content": prompt}],
         )
         answer = completion.choices[0].message.content.strip()
         return answer
     except Exception as e:
         return f"Error: {str(e)}"
 
-# Chatbot view (open for all, history only for logged in users)
+
+# ---------------------------
+#  Chatbot View
+# ---------------------------
 def chatbot_view(request):
     chats = []
     if request.user.is_authenticated:
         chats = Chat.objects.filter(user=request.user).order_by("created_at")
+        for chat in chats:
+            chat.response = markdown2.markdown(
+                chat.response,
+                extras=["fenced-code-blocks", "tables", "strike", "cuddled-lists"]
+            )
 
     if request.method == 'POST':
         message = request.POST.get('message')
-        response = ask_openai(message)
+        response = ask_openai(message, request.user if request.user.is_authenticated else None)
 
-        # Convert Markdown → HTML
-        formatted_response = markdown2.markdown(response)
+        formatted_response = markdown2.markdown(
+            response,
+            extras=["fenced-code-blocks", "tables", "strike", "cuddled-lists"]
+        )
 
-        # Save chat only if user is logged in
         if request.user.is_authenticated:
             Chat.objects.create(
                 user=request.user,
@@ -51,20 +231,76 @@ def chatbot_view(request):
 
     return render(request, 'chatbot.html', {'chats': chats})
 
-# Authentication views
+
+# ---------------------------
+#  Test View for Debugging
+# ---------------------------
+def test_pdf_processing(request):
+    """Test view to debug PDF processing"""
+    if not request.user.is_authenticated:
+        return redirect('login')
+    
+    try:
+        pdfs = UploadedPDF.objects.filter(user=request.user)
+        if pdfs.exists():
+            last_pdf = pdfs.last()
+            if last_pdf.faiss_index_path and os.path.exists(last_pdf.faiss_index_path):
+                with open(last_pdf.faiss_index_path, 'r', encoding='utf-8') as f:
+                    chunks_text = f.read()
+                chunks = [chunk.strip() for chunk in chunks_text.split("---CHUNK_SEPARATOR---") if chunk.strip()]
+                return JsonResponse({
+                    'status': 'success', 
+                    'message': f'PDF processing working. Found {len(chunks)} chunks.',
+                    'chunks_count': len(chunks),
+                    'first_chunk_preview': chunks[0][:100] if chunks else 'No chunks'
+                })
+            else:
+                return JsonResponse({'status': 'error', 'message': 'No processed PDF found'})
+        else:
+            return JsonResponse({'status': 'error', 'message': 'No PDFs uploaded'})
+    except Exception as e:
+        return JsonResponse({'status': 'error', 'message': f'Error: {str(e)}'})
+
+# ---------------------------
+#  PDF Upload View
+# ---------------------------
+def upload_pdf(request):
+    if request.method == 'POST' and request.FILES.get('pdf'):
+        try:
+            pdf_file = request.FILES['pdf']
+            
+            # Validate file type
+            if not pdf_file.name.lower().endswith('.pdf'):
+                return render(request, 'upload_pdf.html', {'error_message': 'Please upload a PDF file'})
+            
+            pdf_obj = UploadedPDF.objects.create(user=request.user, file=pdf_file)
+            process_pdf(pdf_obj)  # extract + embed
+            return redirect('chatbot')
+            
+        except Exception as e:
+            # If processing fails, delete the PDF object
+            if 'pdf_obj' in locals():
+                pdf_obj.delete()
+            return render(request, 'upload_pdf.html', {'error_message': f'Error processing PDF: {str(e)}'})
+    
+    return render(request, 'upload_pdf.html')
+
+
+# ---------------------------
+#  Authentication
+# ---------------------------
 def login_view(request):
     if request.method == 'POST':
         username = request.POST['username']
         password = request.POST['password']
         user = auth.authenticate(request, username=username, password=password)
-
         if user is not None:
             auth.login(request, user)
             return redirect('chatbot')
         else:
-            error_message = 'Invalid Username or Password'
-            return render(request, 'login.html', {'error_message': error_message})
+            return render(request, 'login.html', {'error_message': 'Invalid Username or Password'})
     return render(request, 'login.html')
+
 
 def register_view(request):
     if request.method == 'POST':
@@ -80,12 +316,11 @@ def register_view(request):
                 auth.login(request, user)
                 return redirect('chatbot')
             except:
-                error_message = 'Error creating account'
-                return render(request, 'register.html', {'error_message': error_message})
+                return render(request, 'register.html', {'error_message': 'Error creating account'})
         else:
-            error_message = "Password doesn't match"
-            return render(request, 'register.html', {'error_message': error_message})
+            return render(request, 'register.html', {'error_message': "Password doesn't match"})
     return render(request, 'register.html')
+
 
 def logout_view(request):
     auth.logout(request)
