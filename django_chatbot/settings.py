@@ -9,7 +9,10 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 DEBUG = os.getenv("DEBUG") == "True"
-ALLOWED_HOSTS = os.getenv("ALLOWED_HOSTS", "").split(",")
+
+# Parse comma-separated hosts and strip whitespace/empties
+_hosts = [h.strip() for h in os.getenv("ALLOWED_HOSTS", "").split(",")]
+ALLOWED_HOSTS = [h for h in _hosts if h]
 
 
 
@@ -86,6 +89,25 @@ STATICFILES_DIRS = [static_dir] if static_dir.exists() else []
 STATIC_ROOT = BASE_DIR / "staticfiles"
 if USE_WHITENOISE:
     STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
+
+# ------------------------------
+# Security / Proxy (Render)
+# ------------------------------
+# Trust X-Forwarded-Proto set by Render's proxy so request.is_secure() works
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+
+# Only force secure cookies when not in DEBUG
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+
+# CSRF trusted origins (Django requires scheme prefixes)
+_csrf_env = os.getenv("CSRF_TRUSTED_ORIGINS", "")
+if _csrf_env:
+    CSRF_TRUSTED_ORIGINS = [o.strip() for o in _csrf_env.split(",") if o.strip()]
+else:
+    # Fallback: build from allowed hosts with https scheme
+    CSRF_TRUSTED_ORIGINS = [f"https://{h}" for h in ALLOWED_HOSTS if h]
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
