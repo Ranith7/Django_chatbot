@@ -2,6 +2,7 @@ from pathlib import Path
 import os
 from urllib.parse import urlparse
 from dotenv import load_dotenv
+import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -84,6 +85,11 @@ DATABASES = {
     }
 }
 
+# Prefer DATABASE_URL if provided (Render Postgres)
+_db_url = os.getenv('DATABASE_URL')
+if _db_url:
+    DATABASES['default'] = dj_database_url.parse(_db_url, conn_max_age=600, ssl_require=not DEBUG)
+
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
@@ -135,6 +141,8 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # ==============================
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / "media"
+# Ensure media directory exists (important on Render ephemeral FS)
+os.makedirs(MEDIA_ROOT, exist_ok=True)
 
 # ==============================
 # OpenRouter API (DeepSeek model)

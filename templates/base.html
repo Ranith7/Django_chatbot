@@ -7,6 +7,11 @@
       content="width=device-width, initial-scale=1, shrink-to-fit=no"
     />
     <title>{% block title %}{% endblock %}</title>
+    {% if messages %}
+    <style>
+      .alert{margin:10px}
+    </style>
+    {% endif %}
     <link
       rel="stylesheet"
       href="https://stackpath.bootstrapcdn.com/bootstrap/4.3.1/css/bootstrap.min.css"
@@ -45,7 +50,14 @@
     </nav>
 
     <!-- 🔹 Page Content -->
-    <div class="container mt-4">{% block content %}{% endblock %}</div>
+    <div class="container mt-4">
+      {% if messages %}
+        {% for message in messages %}
+          <div class="alert alert-{{ message.tags }}" role="alert">{{ message }}</div>
+        {% endfor %}
+      {% endif %}
+      {% block content %}{% endblock %}
+    </div>
 
     <script src="https://code.jquery.com/jquery-3.3.1.slim.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/popper.js/1.14.7/umd/popper.min.js"></script>

@@ -23,9 +23,9 @@ def get_openrouter_client():
     if not api_key:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
     return OpenAI(
-        base_url="https://openrouter.ai/api/v1",
+    base_url="https://openrouter.ai/api/v1",
         api_key=api_key
-    )
+)
 
 # ---------------------------
 #  Simple Text Similarity Search
@@ -112,7 +112,7 @@ def process_pdf(pdf_obj):
             length_function=len
         )
         chunks = splitter.split_text(text)
-        
+
         # Ensure chunks is a list and not empty
         if not chunks or not isinstance(chunks, list):
             raise ValueError("Failed to split text into chunks")
@@ -129,7 +129,8 @@ def process_pdf(pdf_obj):
         # Save chunks as text file (simple approach)
         chunks_text = "\n\n---CHUNK_SEPARATOR---\n\n".join(chunks)
         chunks_path = os.path.join(settings.MEDIA_ROOT, "pdfs", f"chunks_{pdf_obj.id}.txt")
-        
+        # Ensure directory exists (important on Render)
+        os.makedirs(os.path.dirname(chunks_path), exist_ok=True)
         with open(chunks_path, 'w', encoding='utf-8') as f:
             f.write(chunks_text)
 
@@ -144,7 +145,7 @@ def process_pdf(pdf_obj):
         print(f"Error processing PDF {pdf_obj.file.name}: {str(e)}")
         raise e
 
- 
+
 
 # ---------------------------
 #  LLM Chat (with optional RAG)
