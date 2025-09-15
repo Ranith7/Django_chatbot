@@ -226,6 +226,7 @@
   const messagesList = document.querySelector(".messages-list");
   const messageForm = document.querySelector(".message-form");
   const messageInput = document.querySelector(".message-input");
+  const csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
 
   function scrollToBottom() {
     messagesList.scrollTop = messagesList.scrollHeight;
@@ -250,15 +251,24 @@
 
     fetch("", {
       method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Accept": "application/json",
+        ...(csrfInput ? { "X-CSRFToken": csrfInput.value } : {}),
+      },
       body: new URLSearchParams({
-        csrfmiddlewaretoken: document.querySelector(
-          "[name=csrfmiddlewaretoken]"
-        ).value,
+        csrfmiddlewaretoken: csrfInput ? csrfInput.value : "",
         message,
       }),
     })
-      .then((r) => r.json())
+      .then(async (r) => {
+        const contentType = r.headers.get("content-type") || "";
+        if (r.ok && contentType.includes("application/json")) {
+          return r.json();
+        }
+        const text = await r.text();
+        return { error: `Server returned ${r.status}. ${text.slice(0, 300)}` };
+      })
       .then((data) => {
         const ai = document.createElement("li");
         ai.classList.add("message", "received");
@@ -272,9 +282,7 @@
           ai.innerHTML = `
           <div class="message-text">
             <div class="message-sender"><b>AI Chatbot</b></div>
-            <div class="message-content">Error: ${
-              data.error || "No response from server"
-            }</div>
+            <div class="message-content">Error: ${data.error || "No response from server"}</div>
           </div>`;
         }
         messagesList.appendChild(ai);
