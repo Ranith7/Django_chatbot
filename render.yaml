@@ -3,7 +3,7 @@ services:
     name: django-chatbot
     env: python
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
-    startCommand: gunicorn django_chatbot.wsgi:application --log-file - --timeout 180 --workers 1
+    startCommand: python manage.py migrate --noinput && gunicorn django_chatbot.wsgi:application --log-file - --timeout 180 --workers 1
     postDeployCommand: python manage.py migrate --noinput
     disk:
       name: data
