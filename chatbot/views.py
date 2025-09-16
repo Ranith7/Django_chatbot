@@ -200,12 +200,14 @@ Please provide a helpful and accurate answer based on the document content."""
         try:
             client = get_openrouter_client()
             completion = client.chat.completions.create(
-                model="deepseek/deepseek-chat-v3.1:free",
+                model="openai/gpt-4o-mini",
                 messages=[{"role": "user", "content": prompt}],
+                timeout=90,
             )
             answer = completion.choices[0].message.content.strip()
             return answer
         except Exception as llm_err:
+            # Log and return concise error to avoid 500s
             return f"Error contacting model: {str(llm_err)}"
     except Exception as e:
         return f"Error: {str(e)}"
