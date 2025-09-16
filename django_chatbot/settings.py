@@ -78,10 +78,12 @@ TEMPLATES = [
 WSGI_APPLICATION = 'django_chatbot.wsgi.application'
 
 # Database
+# Use Postgres if DATABASE_URL is provided. Otherwise use SQLite.
+_sqlite_path = os.getenv('SQLITE_PATH') or str(BASE_DIR / 'db.sqlite3')
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'NAME': _sqlite_path,
     }
 }
 
