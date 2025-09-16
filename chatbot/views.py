@@ -201,11 +201,18 @@ Please provide a helpful and accurate answer based on the document content."""
             completion = client.chat.completions.create(
                 model="deepseek/deepseek-chat-v3.1:free",
                 messages=[{"role": "user", "content": prompt}],
+                timeout=90  # 90 second timeout for the API call
             )
             answer = completion.choices[0].message.content.strip()
             return answer
         except Exception as llm_err:
-            return f"Error contacting model: {str(llm_err)}"
+            error_msg = str(llm_err)
+            if "timeout" in error_msg.lower():
+                return "The AI model is taking too long to respond. Please try again with a shorter question."
+            elif "api" in error_msg.lower() or "key" in error_msg.lower():
+                return "Error contacting AI model. Please check the API configuration."
+            else:
+                return f"Error contacting model: {error_msg}"
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -224,23 +231,29 @@ def chatbot_view(request):
             )
 
     if request.method == 'POST':
-        message = request.POST.get('message')
-        response = ask_openai(message, request.user if request.user.is_authenticated else None)
+        try:
+            message = request.POST.get('message')
+            if not message:
+                return JsonResponse({'error': 'No message provided'}, status=400)
+            
+            response = ask_openai(message, request.user if request.user.is_authenticated else None)
 
-        formatted_response = markdown2.markdown(
-            response,
-            extras=["fenced-code-blocks", "tables", "strike", "cuddled-lists"]
-        )
-
-        if request.user.is_authenticated:
-            Chat.objects.create(
-                user=request.user,
-                message=message,
-                response=response,
-                created_at=timezone.now()
+            formatted_response = markdown2.markdown(
+                response,
+                extras=["fenced-code-blocks", "tables", "strike", "cuddled-lists"]
             )
 
-        return JsonResponse({'message': message, 'response': formatted_response})
+            if request.user.is_authenticated:
+                Chat.objects.create(
+                    user=request.user,
+                    message=message,
+                    response=response,
+                    created_at=timezone.now()
+                )
+
+            return JsonResponse({'message': message, 'response': formatted_response})
+        except Exception as e:
+            return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
 
     return render(request, 'chatbot.html', {'chats': chats})
 
