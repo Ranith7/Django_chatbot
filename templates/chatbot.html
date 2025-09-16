@@ -227,6 +227,24 @@
   const messageForm = document.querySelector(".message-form");
   const messageInput = document.querySelector(".message-input");
   const csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
+  
+  // Get CSRF token from cookie as fallback
+  function getCookie(name) {
+    let cookieValue = null;
+    if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';');
+      for (let i = 0; i < cookies.length; i++) {
+        const cookie = cookies[i].trim();
+        if (cookie.substring(0, name.length + 1) === (name + '=')) {
+          cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+          break;
+        }
+      }
+    }
+    return cookieValue;
+  }
+  
+  const csrfToken = csrfInput ? csrfInput.value : getCookie('csrftoken');
 
   function scrollToBottom() {
     messagesList.scrollTop = messagesList.scrollHeight;
@@ -254,10 +272,10 @@
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
         "Accept": "application/json",
-        ...(csrfInput ? { "X-CSRFToken": csrfInput.value } : {}),
+        "X-CSRFToken": csrfToken,
       },
       body: new URLSearchParams({
-        csrfmiddlewaretoken: csrfInput ? csrfInput.value : "",
+        csrfmiddlewaretoken: csrfToken,
         message,
       }),
     })

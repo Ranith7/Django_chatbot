@@ -11,6 +11,8 @@ urlpatterns = [
     path('upload-pdf/', views.upload_pdf, name="upload_pdf"),
     # ✅ Test route for debugging PDF processing
     path('test-pdf/', views.test_pdf_processing, name="test_pdf"),
+    # ✅ Debug route for CSRF issues
+    path('debug-csrf/', views.debug_csrf, name="debug_csrf"),
 ]
 
 

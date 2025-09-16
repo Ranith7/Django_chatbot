@@ -287,6 +287,19 @@ def test_pdf_processing(request):
     except Exception as e:
         return JsonResponse({'status': 'error', 'message': f'Error: {str(e)}'})
 
+
+def debug_csrf(request):
+    """Debug view to check CSRF token"""
+    from django.middleware.csrf import get_token
+    token = get_token(request)
+    return JsonResponse({
+        'csrf_token': token,
+        'user_authenticated': request.user.is_authenticated,
+        'user': str(request.user) if request.user.is_authenticated else 'Anonymous',
+        'method': request.method,
+        'headers': dict(request.headers)
+    })
+
 # ---------------------------
 #  PDF Upload View
 # ---------------------------
