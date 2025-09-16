@@ -17,6 +17,7 @@ from difflib import SequenceMatcher
 
 from django.conf import settings
 from django.db import IntegrityError, OperationalError, DatabaseError
+from django.middleware.csrf import get_token
 
 # ✅ OpenRouter client setup (lazy)
 def get_openrouter_client():
@@ -201,18 +202,11 @@ Please provide a helpful and accurate answer based on the document content."""
             completion = client.chat.completions.create(
                 model="deepseek/deepseek-chat-v3.1:free",
                 messages=[{"role": "user", "content": prompt}],
-                timeout=90  # 90 second timeout for the API call
             )
             answer = completion.choices[0].message.content.strip()
             return answer
         except Exception as llm_err:
-            error_msg = str(llm_err)
-            if "timeout" in error_msg.lower():
-                return "The AI model is taking too long to respond. Please try again with a shorter question."
-            elif "api" in error_msg.lower() or "key" in error_msg.lower():
-                return "Error contacting AI model. Please check the API configuration."
-            else:
-                return f"Error contacting model: {error_msg}"
+            return f"Error contacting model: {str(llm_err)}"
     except Exception as e:
         return f"Error: {str(e)}"
 
@@ -231,31 +225,33 @@ def chatbot_view(request):
             )
 
     if request.method == 'POST':
-        try:
-            message = request.POST.get('message')
-            if not message:
-                return JsonResponse({'error': 'No message provided'}, status=400)
-            
-            response = ask_openai(message, request.user if request.user.is_authenticated else None)
+        message = request.POST.get('message')
+        response = ask_openai(message, request.user if request.user.is_authenticated else None)
 
-            formatted_response = markdown2.markdown(
-                response,
-                extras=["fenced-code-blocks", "tables", "strike", "cuddled-lists"]
+        formatted_response = markdown2.markdown(
+            response,
+            extras=["fenced-code-blocks", "tables", "strike", "cuddled-lists"]
+        )
+
+        if request.user.is_authenticated:
+            Chat.objects.create(
+                user=request.user,
+                message=message,
+                response=response,
+                created_at=timezone.now()
             )
 
-            if request.user.is_authenticated:
-                Chat.objects.create(
-                    user=request.user,
-                    message=message,
-                    response=response,
-                    created_at=timezone.now()
-                )
-
-            return JsonResponse({'message': message, 'response': formatted_response})
-        except Exception as e:
-            return JsonResponse({'error': f'Server error: {str(e)}'}, status=500)
+        return JsonResponse({'message': message, 'response': formatted_response})
 
     return render(request, 'chatbot.html', {'chats': chats})
+
+
+# ---------------------------
+#  Debug CSRF View
+# ---------------------------
+def debug_csrf(request):
+    token = get_token(request)
+    return JsonResponse({'csrf_token': token})
 
 
 # ---------------------------
@@ -286,19 +282,6 @@ def test_pdf_processing(request):
             return JsonResponse({'status': 'error', 'message': 'No PDFs uploaded'})
     except Exception as e:
         return JsonResponse({'status': 'error', 'message': f'Error: {str(e)}'})
-
-
-def debug_csrf(request):
-    """Debug view to check CSRF token"""
-    from django.middleware.csrf import get_token
-    token = get_token(request)
-    return JsonResponse({
-        'csrf_token': token,
-        'user_authenticated': request.user.is_authenticated,
-        'user': str(request.user) if request.user.is_authenticated else 'Anonymous',
-        'method': request.method,
-        'headers': dict(request.headers)
-    })
 
 # ---------------------------
 #  PDF Upload View
