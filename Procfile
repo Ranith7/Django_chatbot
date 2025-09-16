@@ -1,1 +1,2 @@
-web: python manage.py migrate --noinput && gunicorn django_chatbot.wsgi:application --log-file - --timeout 120 --workers 1
+release: python manage.py migrate
+web: gunicorn django_chatbot.wsgi:application --log-file - --workers 1
