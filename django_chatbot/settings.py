@@ -87,10 +87,14 @@ DATABASES = {
     }
 }
 
-# Prefer DATABASE_URL if provided (Render Postgres)
+# Prefer DATABASE_URL if provided (Render Postgres) ONLY when not in DEBUG
 _db_url = os.getenv('DATABASE_URL')
-if _db_url:
-    DATABASES['default'] = dj_database_url.parse(_db_url, conn_max_age=600, ssl_require=not DEBUG)
+if _db_url and not DEBUG:
+    DATABASES['default'] = dj_database_url.parse(
+        _db_url,
+        conn_max_age=600,
+        ssl_require=True,
+    )
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
