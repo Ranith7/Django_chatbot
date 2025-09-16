@@ -3,11 +3,8 @@ services:
     name: django-chatbot
     env: python
     buildCommand: pip install -r requirements.txt && python manage.py collectstatic --noinput
-    startCommand: python manage.py migrate --noinput && gunicorn django_chatbot.wsgi:application --log-file - --timeout 180 --workers 1
-    postDeployCommand: python manage.py migrate --noinput
-    disk:
-      name: data
-      mountPath: /opt/render/project/data
+    startCommand: gunicorn django_chatbot.wsgi:application --log-file - --timeout 180 --workers 1
+    releaseCommand: python manage.py migrate --noinput
     envVars:
       - key: PYTHON_VERSION
         value: 3.13.2
@@ -21,5 +18,5 @@ services:
         value: "render.com,.onrender.com,127.0.0.1,localhost"
       - key: OPENROUTER_API_KEY
         sync: false
-      - key: SQLITE_PATH
-        value: /opt/render/project/data/db.sqlite3
+      - key: DATABASE_URL
+        sync: false
