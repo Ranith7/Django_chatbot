@@ -13,6 +13,8 @@ urlpatterns = [
     path('test-pdf/', views.test_pdf_processing, name="test_pdf"),
     # ✅ Debug route for CSRF issues
     path('debug-csrf/', views.debug_csrf, name="debug_csrf"),
+    # ✅ New route for starting new conversation session
+    path('new-session/', views.start_new_session, name="new_session"),
 ]
 
 

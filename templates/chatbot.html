@@ -149,6 +149,7 @@
       <div>
         <b>Welcome, {{ user.username }}</b>
         <a style="color: yellow" href="{% url 'logout' %}">Logout</a>
+        <button id="new-session-btn" class="btn btn-sm btn-success ml-2">New Conversation</button>
       </div>
       <!-- 🔹 PDF Upload Button -->
       <form
@@ -183,8 +184,22 @@
           </div>
         </li>
 
-        <!-- Loop through chat history -->
-        {% for chat in chats %} {% if chat.user == request.user %}
+        <!-- Loop through session messages -->
+        {% for msg in session_messages %}
+        <li class="message {% if msg.role == 'user' %}sent{% else %}received{% endif %}">
+          <div class="message-text">
+            <div class="message-sender">
+              <b>{% if msg.role == 'user' %}You{% else %}AI Chatbot{% endif %}</b>
+            </div>
+            <div class="message-content">
+              {% if msg.role == 'assistant' %}{{ msg.formatted_content|safe }}{% else %}{{ msg.content }}{% endif %}
+            </div>
+          </div>
+        </li>
+        {% endfor %}
+        
+        <!-- Fallback: Loop through old chat history for backward compatibility -->
+        {% for chat in chats %} {% if chat.user == request.user and not session_messages %}
         <!-- User message -->
         <li class="message sent">
           <div class="message-text">
@@ -227,6 +242,7 @@
   const messageForm = document.querySelector(".message-form");
   const messageInput = document.querySelector(".message-input");
   const csrfInput = document.querySelector('[name=csrfmiddlewaretoken]');
+  const newSessionBtn = document.getElementById('new-session-btn');
   
   // Get CSRF token from cookie as fallback
   function getCookie(name) {
@@ -248,6 +264,39 @@
 
   function scrollToBottom() {
     messagesList.scrollTop = messagesList.scrollHeight;
+  }
+
+  // Handle new session button
+  if (newSessionBtn) {
+    newSessionBtn.addEventListener('click', function() {
+      if (confirm('Start a new conversation? This will clear the current chat history.')) {
+        fetch('{% url "new_session" %}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrfToken,
+          },
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.session_id) {
+            // Clear the messages list except the greeting
+            const greeting = messagesList.querySelector('.message.received');
+            messagesList.innerHTML = '';
+            if (greeting) {
+              messagesList.appendChild(greeting);
+            }
+            scrollToBottom();
+            alert('New conversation started!');
+          } else {
+            alert('Error starting new conversation: ' + (data.error || 'Unknown error'));
+          }
+        })
+        .catch(error => {
+          alert('Error starting new conversation: ' + error);
+        });
+      }
+    });
   }
 
   messageForm.addEventListener("submit", (event) => {

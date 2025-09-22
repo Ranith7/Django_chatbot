@@ -3,7 +3,7 @@ from django.http import JsonResponse
 import markdown2
 from django.contrib import auth
 from django.contrib.auth.models import User
-from .models import Chat, UploadedPDF
+from .models import Chat, UploadedPDF, ChatSession, Message
 from django.utils import timezone
 from openai import OpenAI
 import os
@@ -151,14 +151,30 @@ def process_pdf(pdf_obj):
 
 
 # ---------------------------
-#  LLM Chat (with optional RAG)
+#  LLM Chat (with conversation history and optional RAG)
 # ---------------------------
-def ask_openai(message, user=None):
+def ask_openai(message, user=None, session=None):
     """
     If user has uploaded PDFs, do RAG retrieval before sending to LLM.
-    Otherwise, send plain query.
+    Uses conversation history if session is provided.
     """
     try:
+        # Build conversation history
+        messages = []
+        
+        # Add system message (optional)
+        messages.append({"role": "system", "content": "You are a helpful AI assistant."})
+        
+        # Add conversation history if session is provided
+        if session:
+            session_messages = Message.objects.filter(session=session).order_by('timestamp')
+            for msg in session_messages:
+                messages.append({"role": msg.role, "content": msg.content})
+        
+        # Add current user message
+        messages.append({"role": "user", "content": message})
+        
+        # Handle RAG context if user has uploaded PDFs
         context = ""
         if user:
             pdfs = UploadedPDF.objects.filter(user=user)
@@ -183,9 +199,9 @@ def ask_openai(message, user=None):
                     except Exception as e:
                         print(f"Error reading PDF chunks: {str(e)}")
 
-        # Build final prompt
+        # If we have RAG context, modify the last user message to include it
         if context:
-            prompt = f"""Based on the following document content, please answer the user's question. If the answer is not in the document, say so clearly.
+            messages[-1]["content"] = f"""Based on the following document content, please answer the user's question. If the answer is not in the document, say so clearly.
 
 Document Content:
 {context}
@@ -193,15 +209,13 @@ Document Content:
 User Question: {message}
 
 Please provide a helpful and accurate answer based on the document content."""
-        else:
-            prompt = message
 
-        # Call DeepSeek model
+        # Call DeepSeek model with conversation history
         try:
             client = get_openrouter_client()
             completion = client.chat.completions.create(
                 model="openai/gpt-4o-mini",
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 timeout=90,
             )
             answer = completion.choices[0].message.content.strip()
@@ -214,13 +228,58 @@ Please provide a helpful and accurate answer based on the document content."""
 
 
 # ---------------------------
+#  Session Management Helper Functions
+# ---------------------------
+def get_or_create_session(user):
+    """Get the user's active session or create a new one"""
+    if not user.is_authenticated:
+        return None
+    
+    # Try to get the most recent active session
+    session = ChatSession.objects.filter(user=user, is_active=True).first()
+    
+    if not session:
+        # Create a new session
+        session = ChatSession.objects.create(user=user)
+    
+    return session
+
+def get_session_messages(session):
+    """Get all messages for a session, formatted for display"""
+    if not session:
+        return []
+    
+    messages = Message.objects.filter(session=session).order_by('timestamp')
+    formatted_messages = []
+    
+    for msg in messages:
+        formatted_messages.append({
+            'role': msg.role,
+            'content': msg.content,
+            'timestamp': msg.timestamp,
+            'formatted_content': markdown2.markdown(
+                msg.content,
+                extras=["fenced-code-blocks", "tables", "strike", "cuddled-lists"]
+            ) if msg.role == 'assistant' else msg.content
+        })
+    
+    return formatted_messages
+
+# ---------------------------
 #  Chatbot View
 # ---------------------------
 def chatbot_view(request):
-    chats = []
+    # Get or create session for authenticated users
+    session = get_or_create_session(request.user)
+    
+    # Get session messages for display
+    session_messages = get_session_messages(session) if session else []
+    
+    # Keep old chats for backward compatibility (optional)
+    old_chats = []
     if request.user.is_authenticated:
-        chats = Chat.objects.filter(user=request.user).order_by("created_at")
-        for chat in chats:
+        old_chats = Chat.objects.filter(user=request.user).order_by("created_at")
+        for chat in old_chats:
             chat.response = markdown2.markdown(
                 chat.response,
                 extras=["fenced-code-blocks", "tables", "strike", "cuddled-lists"]
@@ -228,14 +287,36 @@ def chatbot_view(request):
 
     if request.method == 'POST':
         message = request.POST.get('message')
-        response = ask_openai(message, request.user if request.user.is_authenticated else None)
+        
+        # Get AI response with conversation history
+        response = ask_openai(message, request.user if request.user.is_authenticated else None, session)
 
         formatted_response = markdown2.markdown(
             response,
             extras=["fenced-code-blocks", "tables", "strike", "cuddled-lists"]
         )
 
-        if request.user.is_authenticated:
+        # Save messages to session if user is authenticated
+        if request.user.is_authenticated and session:
+            # Save user message
+            Message.objects.create(
+                session=session,
+                role='user',
+                content=message
+            )
+            
+            # Save assistant response
+            Message.objects.create(
+                session=session,
+                role='assistant',
+                content=response
+            )
+            
+            # Update session timestamp
+            session.updated_at = timezone.now()
+            session.save()
+            
+            # Also save to old Chat model for backward compatibility
             Chat.objects.create(
                 user=request.user,
                 message=message,
@@ -243,10 +324,37 @@ def chatbot_view(request):
                 created_at=timezone.now()
             )
 
-        return JsonResponse({'message': message, 'response': formatted_response})
+        return JsonResponse({
+            'message': message, 
+            'response': formatted_response,
+            'session_id': str(session.session_id) if session else None
+        })
 
-    return render(request, 'chatbot.html', {'chats': chats})
+    return render(request, 'chatbot.html', {
+        'chats': old_chats,  # Keep for backward compatibility
+        'session_messages': session_messages,
+        'session_id': str(session.session_id) if session else None
+    })
 
+
+# ---------------------------
+#  New Session View
+# ---------------------------
+def start_new_session(request):
+    """Start a new conversation session"""
+    if not request.user.is_authenticated:
+        return JsonResponse({'error': 'User not authenticated'}, status=401)
+    
+    # Deactivate current active session
+    ChatSession.objects.filter(user=request.user, is_active=True).update(is_active=False)
+    
+    # Create new session
+    session = ChatSession.objects.create(user=request.user)
+    
+    return JsonResponse({
+        'session_id': str(session.session_id),
+        'message': 'New conversation started'
+    })
 
 # ---------------------------
 #  Debug CSRF View
